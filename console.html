@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bioreactor Console</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1d232b; --muted: #6b7480; --line: #e3e6ea;
+    --accent: #2563eb; --good: #15803d; --good-bg: #dcfce7; --bad: #b91c1c; --bad-bg: #fee2e2;
+    --idle-bg: #eef0f3;
+    /* chart roles (reference palette, validated) */
+    --series-1: #2a78d6; --chart-muted: #898781; --grid: #e1e0d9; --axis: #c3c2b7;
+    --critical: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151a; --card: #1b2028; --text: #e6e9ee; --muted: #8b95a3; --line: #2b323d;
+      --accent: #60a5fa; --good: #4ade80; --good-bg: #14301f; --bad: #f87171; --bad-bg: #3a1a1a;
+      --idle-bg: #262c36;
+      --series-1: #3987e5; --grid: #2c2c2a; --axis: #383835;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 20px 16px 40px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 18px; }
+  h1 { font-size: 20px; margin: 0; margin-right: auto; }
+  .badge { padding: 4px 10px; border-radius: 999px; font-weight: 600; font-size: 13px;
+           background: var(--idle-bg); color: var(--muted); }
+  .badge.running { background: var(--good-bg); color: var(--good); }
+  .badge.fault { background: var(--bad-bg); color: var(--bad); }
+  .conn { font-size: 13px; color: var(--muted); }
+  .conn.off { color: var(--bad); }
+  button { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--card); color: var(--text); cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .card h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+             color: var(--muted); margin: 0 0 8px; }
+  .value { font-size: 30px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .unit { font-size: 15px; color: var(--muted); font-weight: 500; margin-left: 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 2px 0 10px; font-variant-numeric: tabular-nums; }
+  .row { display: flex; gap: 6px; }
+  .row input { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border-radius: 8px;
+               border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  .card.broken { border-color: var(--bad); }
+  .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .presets button { padding: 4px 10px; font-variant-numeric: tabular-nums; }
+  .presets button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .sim { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+  .sim small { display: block; color: var(--muted); margin-bottom: 6px; }
+  /* Trends: one small chart per measurement (different units never share an axis) */
+  #trends { margin-top: 18px; }
+  .trends-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; margin-bottom: 10px; }
+  .trends-head h2 { margin: 0 auto 0 0; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .key { width: 16px; height: 0; border-top: 2px solid var(--series-1); }
+  .key.sp { border-top: 2px dashed var(--chart-muted); }
+  .key.band { width: 12px; height: 12px; border: 0; border-radius: 2px;
+              background: color-mix(in srgb, var(--critical) 18%, transparent); }
+  .charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px 20px; }
+  .chart { position: relative; }
+  .chart h3 { font-size: 13px; font-weight: 600; margin: 0 0 4px; }
+  .chart h3 .unit { font-size: 12px; }
+  .chart svg { display: block; width: 100%; height: 130px; overflow: visible; touch-action: none; }
+  .chart .tick { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+  .chart .end { font-size: 12px; font-weight: 600; fill: var(--text); font-variant-numeric: tabular-nums; }
+  .chart .band-label { font-size: 11px; fill: var(--text); }
+  .tip { position: absolute; pointer-events: none; background: var(--card); border: 1px solid var(--line);
+         border-radius: 8px; padding: 6px 8px; font-size: 12px; box-shadow: 0 4px 12px rgba(0,0,0,.12);
+         white-space: nowrap; display: none; z-index: 1; }
+  .tip b { font-size: 14px; font-variant-numeric: tabular-nums; }
+  .tip .k { display: inline-block; width: 12px; margin-right: 6px; vertical-align: middle; }
+  .tip .muted { color: var(--muted); }
+
+  #log { margin-top: 18px; }
+  #log ol { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow-y: auto;
+            font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #log li { padding: 2px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+  #log .err { color: var(--bad); }
+  #log .ok { color: var(--good); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Bioreactor</h1>
+    <span id="State" class="badge">…</span>
+    <button class="primary" onclick="send('Start')">Start</button>
+    <button onclick="send('Stop')">Stop</button>
+    <span id="conn" class="conn">connecting…</span>
+  </header>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Temperature</h2>
+      <div><span class="value" id="Temperature.Value">–</span><span class="unit">°C</span></div>
+      <div class="sub">setpoint <span id="Temperature.Setpoint">–</span> °C</div>
+      <div class="row"><input id="in-temp" type="number" step="0.1" placeholder="20–45">
+        <button onclick="sendValue('Temperature.SetSetpoint', 'in-temp')">Set</button></div>
+    </section>
+
+    <section class="card">
+      <h2>pH</h2>
+      <div><span class="value" id="Ph.Value">–</span></div>
+      <div class="sub">setpoint <span id="Ph.Setpoint">–</span></div>
+      <div class="row"><input id="in-ph" type="number" step="0.05" placeholder="6–8">
+        <button onclick="sendValue('Ph.SetSetpoint', 'in-ph')">Set</button></div>
+    </section>
+
+    <section class="card">
+      <h2>Dissolved oxygen</h2>
+      <div><span class="value" id="DissolvedOxygen.Value">–</span><span class="unit">%</span></div>
+      <div class="sub">setpoint <span id="DissolvedOxygen.Setpoint">–</span> %</div>
+      <div class="row"><input id="in-do" type="number" step="1" placeholder="0–100">
+        <button onclick="sendValue('DissolvedOxygen.SetSetpoint', 'in-do')">Set</button></div>
+    </section>
+
+    <section class="card">
+      <h2>Agitator</h2>
+      <div><span class="value" id="Agitator.Speed">–</span><span class="unit">rpm</span></div>
+      <div class="sub">setpoint <span id="Agitator.Setpoint">–</span> rpm</div>
+      <div class="row"><input id="in-rpm" type="number" step="10" placeholder="0–500">
+        <button onclick="sendValue('Agitator.SetSpeed', 'in-rpm')">Set</button></div>
+    </section>
+
+    <section class="card" id="pump-card">
+      <h2>Base pump</h2>
+      <div><span class="value" id="BasePump.Output">–</span><span class="unit">%</span></div>
+      <div class="sub">status <span id="BasePump.Fault">–</span></div>
+      <div class="row"><input id="in-pump" type="number" step="5" placeholder="0–100">
+        <button onclick="sendValue('BasePump.SetOutput', 'in-pump')">Set</button></div>
+      <div class="sim">
+        <small>Simulation only</small>
+        <div class="row">
+          <button onclick="send('BasePump.InjectFault')">Break pump</button>
+          <button onclick="send('BasePump.ClearFault')">Repair</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Simulation speed</h2>
+      <div><span class="value" id="Simulation.SpeedFactor">–</span><span class="unit">× real time</span></div>
+      <div class="sub">1 simulated second = <span id="tick-ms">–</span> ms</div>
+      <div class="presets" id="speed-presets">
+        <button data-speed="1">1×</button>
+        <button data-speed="2">2×</button>
+        <button data-speed="5">5×</button>
+        <button data-speed="10">10×</button>
+        <button data-speed="50">50×</button>
+      </div>
+      <div class="row"><input id="in-speed" type="number" step="0.5" placeholder="0.5–100">
+        <button onclick="sendValue('Simulation.SetSpeedFactor', 'in-speed')">Set</button></div>
+    </section>
+  </div>
+
+  <section id="trends" class="card" aria-label="Trends for the last 2 minutes">
+    <div class="trends-head">
+      <h2>Trends · last 2 minutes</h2>
+      <div class="legend">
+        <span><i class="key"></i>Value</span>
+        <span><i class="key sp"></i>Setpoint</span>
+        <span><i class="key band"></i>Pump broken</span>
+      </div>
+    </div>
+    <div class="charts" id="charts"></div>
+  </section>
+
+  <section id="log" class="card">
+    <h2>Log</h2>
+    <ol id="log-list"></ol>
+  </section>
+</main>
+
+<script>
+  // How many decimals to show for each value
+  const DECIMALS = {
+    "Temperature.Value": 1, "Temperature.Setpoint": 1,
+    "Ph.Value": 2, "Ph.Setpoint": 2,
+    "DissolvedOxygen.Value": 0, "DissolvedOxygen.Setpoint": 0,
+    "Agitator.Speed": 0, "Agitator.Setpoint": 0,
+    "BasePump.Output": 0,
+  };
+
+  function log(text, kind) {
+    const li = document.createElement("li");
+    li.textContent = new Date().toLocaleTimeString() + "  " + text;
+    if (kind) li.className = kind;
+    const list = document.getElementById("log-list");
+    list.prepend(li);
+    while (list.children.length > 50) list.lastChild.remove();
+  }
+
+  function show(name, value) {
+    const el = document.getElementById(name);
+    if (!el) return;
+    if (name === "State") {
+      el.textContent = value;
+      el.className = "badge" + (value === "Running" ? " running" : "");
+    } else if (name === "Simulation.SpeedFactor") {
+      el.textContent = Number(value).toString();
+      document.getElementById("tick-ms").textContent = Math.round(1000 / value);
+      document.querySelectorAll("#speed-presets button").forEach(b =>
+        b.setAttribute("aria-pressed", Number(b.dataset.speed) === Number(value)));
+    } else if (name === "BasePump.Fault") {
+      el.textContent = value ? "BROKEN" : "ok";
+      document.getElementById("pump-card").classList.toggle("broken", value);
+    } else {
+      el.textContent = Number(value).toFixed(DECIMALS[name] ?? 2);
+    }
+  }
+
+  // Live values: the console pushes every change over Server-Sent Events
+  const conn = document.getElementById("conn");
+  const events = new EventSource("/events");
+  events.onopen = () => { conn.textContent = "live"; conn.className = "conn"; };
+  events.onerror = () => { conn.textContent = "disconnected"; conn.className = "conn off"; };
+  events.onmessage = (msg) => {
+    const change = JSON.parse(msg.data);
+    current[change.name] = change.value;   // the charts sample this every 0.5 s
+    show(change.name, change.value);
+    log(change.name + " = " + change.value);
+  };
+
+  // Commands: POST to the console, which calls the OPC UA Method
+  async function send(command, value) {
+    const body = value === undefined ? { command } : { command, value };
+    const label = command + "(" + (value ?? "") + ")";
+    try {
+      const res = await fetch("/api/command", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.ok) log(label + " -> Good", "ok");
+      else log(label + " -> " + data.error, "err");
+    } catch (e) {
+      log(label + " -> " + e, "err");
+    }
+  }
+
+  // ---- Trends -------------------------------------------------------------
+  // Changes only arrive when a value moves, so every 0.5 s we take a snapshot of
+  // the latest values ("sample and hold") and draw the last 2 minutes.
+  const CHARTS = [
+    { title: "Temperature", unit: "°C", value: "Temperature.Value", setpoint: "Temperature.Setpoint", dec: 1 },
+    { title: "pH", unit: "", value: "Ph.Value", setpoint: "Ph.Setpoint", dec: 2 },
+    { title: "Dissolved oxygen", unit: "%", value: "DissolvedOxygen.Value", setpoint: "DissolvedOxygen.Setpoint", dec: 0 },
+    { title: "Agitator", unit: "rpm", value: "Agitator.Speed", setpoint: "Agitator.Setpoint", dec: 0 },
+    { title: "Base pump", unit: "%", value: "BasePump.Output", setpoint: null, dec: 0, fault: "BasePump.Fault" },
+  ];
+  const WINDOW_MS = 120000, SAMPLE_MS = 500;
+  const H = 130, PAD = { l: 40, r: 48, t: 8, b: 20 };
+  const current = {};      // name -> latest value
+  const history = [];      // [{ t, v: {name: value} }]
+  let hoverT = null;       // time under the pointer (shared by all charts = synced crosshair)
+
+  const chartsEl = document.getElementById("charts");
+  CHARTS.forEach((c, i) => {
+    const div = document.createElement("div");
+    div.className = "chart";
+    const h3 = document.createElement("h3");
+    h3.textContent = c.title + " ";
+    const u = document.createElement("span");
+    u.className = "unit"; u.style.color = "var(--muted)"; u.textContent = c.unit;
+    h3.append(u);
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", c.title + " over the last 2 minutes");
+    const tip = document.createElement("div");
+    tip.className = "tip";
+    div.append(h3, svg, tip);
+    chartsEl.append(div);
+    c.svg = svg; c.tip = tip;
+    svg.addEventListener("pointermove", (e) => {
+      const r = svg.getBoundingClientRect();
+      const now = Date.now();
+      const frac = (e.clientX - r.left - PAD.l) / (r.width - PAD.l - PAD.r);
+      hoverT = now - WINDOW_MS + Math.min(1, Math.max(0, frac)) * WINDOW_MS;
+      c.hovered = true;
+      drawAll();
+    });
+    svg.addEventListener("pointerleave", () => { hoverT = null; c.hovered = false; drawAll(); });
+  });
+
+  function niceTicks(lo, hi) {
+    const step0 = (hi - lo) / 2;
+    const mag = Math.pow(10, Math.floor(Math.log10(step0)));
+    const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= step0) || step0;
+    const start = Math.floor(lo / step) * step, end = Math.ceil(hi / step) * step;
+    const ticks = [];
+    for (let v = start; v <= end + step / 2; v += step) ticks.push(+v.toFixed(6));
+    return ticks;
+  }
+
+  function nearest(t) {
+    let best = null;
+    for (const s of history) if (!best || Math.abs(s.t - t) < Math.abs(best.t - t)) best = s;
+    return best;
+  }
+
+  function draw(c) {
+    const W = c.svg.clientWidth || 300;
+    const now = Date.now(), t0 = now - WINDOW_MS;
+    const pts = history.filter(s => s.v[c.value] !== undefined);
+    c.svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    if (pts.length === 0) {
+      c.svg.innerHTML = `<text class="tick" x="${PAD.l}" y="${H / 2}">waiting for data…</text>`;
+      return;
+    }
+    // y range covers value and setpoint, with a little air
+    const ys = pts.flatMap(s => c.setpoint && s.v[c.setpoint] !== undefined ? [s.v[c.value], s.v[c.setpoint]] : [s.v[c.value]]);
+    let lo = Math.min(...ys), hi = Math.max(...ys);
+    if (hi - lo < 1e-9) { const pad = Math.max(Math.abs(hi) * 0.05, 1); lo -= pad; hi += pad; }
+    const ticks = niceTicks(lo, hi);
+    lo = ticks[0]; hi = ticks[ticks.length - 1];
+    const x = t => PAD.l + (t - t0) / WINDOW_MS * (W - PAD.l - PAD.r);
+    const y = v => PAD.t + (1 - (v - lo) / (hi - lo)) * (H - PAD.t - PAD.b);
+    let s = "";
+
+    // fault bands (status color + label, never color alone)
+    if (c.fault) {
+      let start = null;
+      const bands = [];
+      for (const p of pts) {
+        if (p.v[c.fault] && start === null) start = p.t;
+        if (!p.v[c.fault] && start !== null) { bands.push([start, p.t]); start = null; }
+      }
+      if (start !== null) bands.push([start, now]);
+      for (const [a, b] of bands) {
+        const xa = Math.max(x(a), PAD.l), xb = x(b);
+        s += `<rect x="${xa}" y="${PAD.t}" width="${Math.max(xb - xa, 2)}" height="${H - PAD.t - PAD.b}"
+                fill="var(--critical)" fill-opacity="0.16"/>`;
+        if (xb - xa > 46) s += `<text class="band-label" x="${xa + 4}" y="${PAD.t + 12}">⚠ broken</text>`;
+      }
+    }
+    // gridlines + y ticks (hairline, solid, recessive); decimals follow the tick step (0.5 -> 1, 0.25 -> 2)
+    const step = ticks[1] - ticks[0];
+    const tickDec = (String(+step.toFixed(6)).split(".")[1] || "").length;
+    for (const v of ticks) {
+      s += `<line x1="${PAD.l}" x2="${W - PAD.r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)" stroke-width="1"/>`;
+      s += `<text class="tick" x="${PAD.l - 6}" y="${y(v) + 4}" text-anchor="end">${v.toFixed(tickDec)}</text>`;
+    }
+    s += `<line x1="${PAD.l}" x2="${W - PAD.r}" y1="${H - PAD.b}" y2="${H - PAD.b}" stroke="var(--axis)" stroke-width="1"/>`;
+    s += `<text class="tick" x="${PAD.l}" y="${H - 5}">−2 min</text>`;
+    s += `<text class="tick" x="${(PAD.l + W - PAD.r) / 2}" y="${H - 5}" text-anchor="middle">−1 min</text>`;
+    s += `<text class="tick" x="${W - PAD.r}" y="${H - 5}" text-anchor="end">now</text>`;
+
+    // setpoint: a step line (it jumps instantly), dashed, muted
+    if (c.setpoint) {
+      let d = "";
+      pts.forEach((p, i) => {
+        const v = p.v[c.setpoint];
+        d += i === 0 ? `M${x(p.t)},${y(v)}` : `H${x(p.t)}V${y(v)}`;
+      });
+      d += `H${x(now)}`;
+      s += `<path d="${d}" fill="none" stroke="var(--chart-muted)" stroke-width="1.5" stroke-dasharray="4 3"/>`;
+    }
+    // value: 2px line, round joins
+    const d = pts.map((p, i) => `${i ? "L" : "M"}${x(p.t)},${y(p.v[c.value])}`).join("");
+    s += `<path d="${d}" fill="none" stroke="var(--series-1)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    // end dot with a surface ring + latest value as a direct label
+    const last = pts[pts.length - 1];
+    s += `<circle cx="${x(last.t)}" cy="${y(last.v[c.value])}" r="4" fill="var(--series-1)" stroke="var(--card)" stroke-width="2"/>`;
+    s += `<text class="end" x="${x(last.t) + 8}" y="${y(last.v[c.value]) + 4}">${Number(last.v[c.value]).toFixed(c.dec)}</text>`;
+
+    // crosshair (synced across charts) + tooltip on the chart under the pointer
+    c.tip.style.display = "none";
+    if (hoverT !== null) {
+      const p = nearest(hoverT);
+      if (p && p.v[c.value] !== undefined) {
+        const cx = x(p.t);
+        s += `<line x1="${cx}" x2="${cx}" y1="${PAD.t}" y2="${H - PAD.b}" stroke="var(--muted)" stroke-width="1"/>`;
+        s += `<circle cx="${cx}" cy="${y(p.v[c.value])}" r="4" fill="var(--series-1)" stroke="var(--card)" stroke-width="2"/>`;
+        if (c.hovered) showTip(c, p, cx, W);
+      }
+    }
+    c.svg.innerHTML = s;
+  }
+
+  function showTip(c, p, cx, W) {
+    const tip = c.tip;
+    tip.replaceChildren();
+    const row = (keyStyle, strong, label) => {
+      const line = document.createElement("div");
+      const k = document.createElement("i");
+      k.className = "k"; k.style.borderTop = keyStyle;
+      const b = document.createElement("b"); b.textContent = strong;
+      const l = document.createElement("span"); l.className = "muted"; l.textContent = " " + label;
+      line.append(k, b, l);
+      tip.append(line);
+    };
+    const ago = document.createElement("div");
+    ago.className = "muted";
+    ago.textContent = ((Date.now() - p.t) / 1000).toFixed(1) + " s ago";
+    tip.append(ago);
+    row("2px solid var(--series-1)", Number(p.v[c.value]).toFixed(c.dec) + " " + c.unit, "value");
+    if (c.setpoint && p.v[c.setpoint] !== undefined)
+      row("2px dashed var(--chart-muted)", Number(p.v[c.setpoint]).toFixed(c.dec) + " " + c.unit, "setpoint");
+    if (c.fault && p.v[c.fault]) {
+      const f = document.createElement("div"); f.textContent = "⚠ pump broken"; tip.append(f);
+    }
+    tip.style.display = "block";
+    const left = cx + 12 + tip.offsetWidth > W ? cx - 12 - tip.offsetWidth : cx + 12;
+    tip.style.left = left + "px";
+    tip.style.top = "26px";
+  }
+
+  function drawAll() { CHARTS.forEach(draw); }
+
+  setInterval(() => {
+    if (Object.keys(current).length === 0) return;
+    const now = Date.now();
+    history.push({ t: now, v: { ...current } });
+    while (history.length && history[0].t < now - WINDOW_MS) history.shift();
+    drawAll();
+  }, SAMPLE_MS);
+  window.addEventListener("resize", drawAll);
+  drawAll();
+
+  document.querySelectorAll("#speed-presets button").forEach(b =>
+    b.addEventListener("click", () => send("Simulation.SetSpeedFactor", Number(b.dataset.speed))));
+
+  function sendValue(command, inputId) {
+    const input = document.getElementById(inputId);
+    if (input.value === "") { log(command + ": enter a number first", "err"); return; }
+    send(command, Number(input.value));
+  }
+</script>
+</body>
+</html>
